@@ -1,0 +1,72 @@
+import pandas as pd
+import numpy as np
+from sklearn.preprocessing import LabelEncoder
+import joblib
+
+def preprocess_patient_data(input_file='patient_health_data.csv', output_file='preprocessed_patient_data.csv'):
+    """
+    Preprocess raw patient health data by:
+    1. Splitting BP into systolic/diastolic components
+    2. Calculating emergency levels
+    3. Assigning synthetic diseases to high-risk patients
+    4. Saving processed data and label encoders
+    """
+    print("=== PATIENT DATA PREPROCESSING ===")
+
+    # 1. Load raw data
+    print("\nLoading raw data...")
+    df = pd.read_csv('patient_health_data.csv')
+    print(f"Original data shape: {df.shape}")
+    print("Sample raw data:")
+    print(df.head(3))
+
+    # 2. Process BP values
+    print("\nProcessing BP values...")
+    df[['BP_systolic', 'BP_diastolic']] = df['BP Level (mmHg)'].str.split('/', expand=True).astype(int)
+    df.drop('BP Level (mmHg)', axis=1, inplace=True)
+
+    # 3. Calculate emergency levels
+    print("\nCalculating emergency levels...")
+    def determine_emergency(row):
+        if (row['Heart Rate (bpm)'] > 100 or row['Heart Rate (bpm)'] < 60 or
+            row['BP_systolic'] > 140 or row['BP_diastolic'] > 90 or
+            row['Glucose Level (mg/dL)'] > 140):
+            return 'High risk'
+        elif (row['Heart Rate (bpm)'] > 90 or row['Heart Rate (bpm)'] < 65 or
+              row['BP_systolic'] > 130 or row['BP_diastolic'] > 85 or
+              row['Glucose Level (mg/dL)'] > 120):
+            return 'Moderate'
+        return 'Normal'
+
+    df['Emergency_Level'] = df.apply(determine_emergency, axis=1)
+
+    # 4. Assign synthetic diseases
+    print("\nAssigning diseases to high-risk patients...")
+    diseases = ['Cardiac Issue', 'Diabetes', 'Hypertension', 'Arrhythmia']
+    df['Disease'] = 'None'
+
+    high_risk_mask = df['Emergency_Level'] == 'High risk'
+    df.loc[high_risk_mask, 'Disease'] = np.random.choice(diseases, size=high_risk_mask.sum())
+
+    # 5. Prepare encoders for future use
+    print("\nPreparing label encoders...")
+    emergency_encoder = LabelEncoder().fit(df['Emergency_Level'])
+    disease_encoder = LabelEncoder().fit(df['Disease'])
+
+    # 6. Save processed data and encoders
+    df.to_csv(output_file, index=False)
+    joblib.dump(emergency_encoder, 'emergency_encoder.pkl')
+    joblib.dump(disease_encoder, 'disease_encoder.pkl')
+
+    print("\n=== PREPROCESSING COMPLETE ===")
+    print(f"Processed data saved to {output_file}")
+    print("Final data shape:", df.shape)
+    print("\nEmergency Level distribution:")
+    print(df['Emergency_Level'].value_counts())
+    print("\nDisease distribution (high-risk patients only):")
+    print(df[high_risk_mask]['Disease'].value_counts())
+    print("\nSample processed data:")
+    return df.head()
+
+if _name_ == "_main_":
+    preprocess_patient_data()
