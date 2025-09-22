@@ -1,0 +1,94 @@
+import pandas as pd
+import numpy as np
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.metrics import classification_report
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras import layers
+import joblib
+from google.colab import files
+
+# === Load Preprocessed Data ===
+df = pd.read_csv("preprocessed_patient_data.csv")
+
+# === Preserve Patient Order ===
+df.sort_values(by='Patient ID', inplace=True)
+df.reset_index(drop=True, inplace=True)
+
+# === Features and Labels ===
+features = ['Patient Age', 'Heart Rate (bpm)', 'BP_systolic', 'BP_diastolic', 'Glucose Level (mg/dL)']
+X = df[features]
+y_emergency = df['Emergency_Level']
+y_disease = df['Disease']
+
+# === Split Train/Test ===
+X_train, X_test, y_emergency_train, y_emergency_test, y_disease_train, y_disease_test, idx_train, idx_test = train_test_split(
+    X, y_emergency, y_disease, df.index, test_size=0.2, random_state=42)
+
+print(f"Training samples: {len(X_train)}")
+print(f"Testing samples: {len(X_test)}")
+
+# === Train Random Forest for Emergency_Level ===
+print("\nTraining Random Forest for Emergency Level classification...")
+rf = RandomForestClassifier(n_estimators=150, max_depth=8, random_state=42)
+rf.fit(X_train, y_emergency_train)
+pred_emergency_train = rf.predict(X_train)
+print("\nRandom Forest Training Performance:")
+# print(classification_report(y_emergency_train, rf_train_preds))
+joblib.dump(rf, "emergency_rf_model.pkl")
+
+# === Train ANN for Disease (only High Risk) ===
+high_risk_mask = y_emergency_train == 'High risk'
+X_disease = X_train[high_risk_mask]
+y_disease_hr = y_disease_train[high_risk_mask]
+
+if len(X_disease) > 0:
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X_disease)
+
+    le = LabelEncoder()
+    y_encoded = le.fit_transform(y_disease_hr)
+
+    model = keras.Sequential([
+        layers.Dense(64, activation='relu', input_shape=(X_disease.shape[1],)),
+        layers.Dropout(0.3),
+        layers.Dense(32, activation='relu'),
+        layers.Dense(len(np.unique(y_encoded)), activation='softmax')
+    ])
+
+    model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+    model.fit(X_scaled, y_encoded, epochs=60, batch_size=12, validation_split=0.1, verbose=1)
+
+    model.save("disease_ann_model.h5")
+    joblib.dump(scaler, "disease_scaler.pkl")
+    joblib.dump(le, "disease_encoder.pkl")
+
+    # === Predict on Train Data ===
+    predicted_disease = [''] * len(X_train)
+    ann_pred_probs = model.predict(scaler.transform(X_disease))
+    ann_pred_classes = le.inverse_transform(np.argmax(ann_pred_probs, axis=1))
+
+    for i, idx in enumerate(X_disease.index):
+        loc = X_train.index.get_loc(idx)
+        predicted_disease[loc] = ann_pred_classes[i]
+else:
+    predicted_disease = [''] * len(X_train)
+
+# === Final Train DataFrame with Original Order ===
+df_result = df.loc[idx_train, ['Patient ID', 'Patient Name'] + features].copy()
+df_result['Emergency_Level'] = y_emergency_train.values
+# df_result['Predicted_Emergency_Level'] = pred_emergency_train
+df_result['Disease'] = y_disease_train.values
+# df_result['Predicted_Disease'] = predicted_disease
+
+df_result.sort_values(by='Patient ID', inplace=True)
+df_result.to_csv("trained_patient_data.csv", index=False)
+
+# === Download Files ===
+files.download("emergency_rf_model.pkl")
+files.download("disease_ann_model.h5")
+files.download("disease_scaler.pkl")
+files.download("disease_encoder.pkl")
+files.download("trained_patient_data.csv")
