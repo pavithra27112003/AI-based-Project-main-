@@ -1,0 +1,86 @@
+import time
+import joblib
+import numpy as np
+import tensorflow as tf
+import firebase_admin
+from firebase_admin import credentials, db
+from twilio.rest import Client
+
+# === Firebase & Twilio Setup ===
+if not firebase_admin._apps:
+    cred = credentials.Certificate("/content/ai-health-953b2-firebase-adminsdk-fbsvc-8bfe864926.json")
+    firebase_admin.initialize_app(cred, {
+        'databaseURL': 'https://ai-health-953b2-default-rtdb.asia-southeast1.firebasedatabase.app/'
+    })
+
+twilio_sid = ''
+twilio_token = ''
+twilio_from = ''
+twilio_to = '+'
+
+client = Client(twilio_sid, twilio_token)
+
+# === Load Models ===
+rf_model = joblib.load("emergency_rf_model.pkl")
+ann_model = tf.keras.models.load_model("disease_ann_model.h5")
+scaler = joblib.load("disease_scaler.pkl")
+encoder = joblib.load("disease_encoder.pkl")
+
+# === Monitor & Predict Function ===
+def monitor_and_predict():
+    print("👀 Monitoring Firebase for live vitals...")
+    ref = db.reference("/AI Health/PatientVitals")
+
+    while True:
+        snapshot = ref.get()
+
+        if isinstance(snapshot, list):
+            for entry in snapshot:
+                if entry is None or 'current' not in entry:
+                    continue
+
+                current = entry['current']
+                vitals = current.get('vitals', {})
+                if not vitals:
+                    continue
+
+                try:
+                    features = np.array([[
+                        int(current['age']),
+                        int(vitals.get('heart_rate', 0)),
+                        int(vitals.get('blood_pressure', '0/0').split('/')[0]),
+                        int(vitals.get('blood_pressure', '0/0').split('/')[1]),
+                        int(vitals.get('glucose_level', 0))
+                    ]])
+
+                    # Predict Emergency Level
+                    emergency_level = rf_model.predict(features)[0]
+                    print(f"🧠 Patient {current['patient_name']} ➜ Emergency: {emergency_level}")
+
+                    # If high risk, predict disease and alert
+                    if emergency_level == "High risk":
+                        X_scaled = scaler.transform(features)
+                        pred_probs = ann_model.predict(X_scaled)
+                        disease = encoder.inverse_transform([np.argmax(pred_probs)])[0]
+
+                        msg = (
+                            f"🚨 EMERGENCY ALERT 🚨\n"
+                            f"Patient: {current['patient_name']}\n"
+                            f"ID: {current['patient_id']}\n"
+                            f"Emergency Level: {emergency_level}\n"
+                            f"Predicted Disease: {disease}"
+                        )
+
+                        print(msg)
+                        client.messages.create(body=msg, from_=twilio_from, to=twilio_to)
+
+                except Exception as e:
+                    print(f"❌ Error processing entry: {e}")
+
+        else:
+            print("⚠ Unexpected format:", type(snapshot))
+
+        time.sleep(5)
+
+if _name_ == "_main_":
+    monitor_and_predict()
