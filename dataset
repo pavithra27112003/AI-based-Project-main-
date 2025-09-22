@@ -1,0 +1,71 @@
+import firebase_admin
+from firebase_admin import credentials, db
+import pandas as pd
+import random
+import time
+
+# Initialize Firebase Admin SDK
+if not firebase_admin._apps:
+    cred = credentials.Certificate("/content/ai-health-953b2-firebase-adminsdk-fbsvc-8bfe864926.json")
+    firebase_admin.initialize_app(cred, {
+        'databaseURL': 'https://ai-health-953b2-default-rtdb.asia-southeast1.firebasedatabase.app/'
+    })
+# Reference to Firebase Realtime Database
+ref = db.reference('/AI Health/PatientVitals')
+
+# Read the CSV (make sure your CSV is in the correct format)
+df = pd.read_csv('/content/trained_patient_data.csv')
+
+# Check the columns and preview data
+print("CSV Columns:", df.columns)
+print(df.head())  # Preview the first few rows of the dataset
+
+# Function to simulate vitals (using the values from the dataset)
+def simulate_vitals(row):
+    return {
+        "heart_rate": int(row["Heart Rate (bpm)"]),  # Convert to int
+        "blood_pressure": f"{int(row['BP_systolic'])}/{int(row['BP_diastolic'])}",  # Convert BP to int
+        "glucose_level": int(row["Glucose Level (mg/dL)"]),  # Convert to int
+        "emergency_level": row["Emergency_Level"],  # Emergency level (critical, normal, etc.)
+        "disease": row["Disease"] if isinstance(row["Disease"], str) else None  # Handle NaN or missing disease info
+    }
+
+# Function to upload data to Firebase
+def upload_to_firebase(patient_id, patient_name,age, vitals_data, timestamp):
+    # Prepare data to store in Firebase
+    patient_data = {
+        "patient_id": patient_id,
+        "patient_name": patient_name,
+        "age":age,
+        "vitals": vitals_data,
+        "timestamp": timestamp
+    }
+
+    # Upload current vitals
+    ref.child(str(patient_id)).child('current').set(patient_data)
+
+    # Store past vitals
+    ref.child(str(patient_id)).child('past').push(patient_data)
+
+# Simulate and upload vitals periodically for the first patient (or choose a specific patient if needed)
+def simulate_and_upload():
+    for index, row in df.iterrows():
+        patient_id = str(row['Patient ID'])  # Get Patient ID from the dataset
+        patient_name = str(row['Patient Name'])
+        age =int(row['Patient Age']) # Get Patient Name from the dataset
+
+        print(f"Patient ID: {patient_id}, Patient Name: {patient_name}, Patient Age:{age}")  # Debugging output
+
+        vitals_data = simulate_vitals(row)  # Simulate vitals for the current patient
+        timestamp = time.strftime('%Y-%m-%d %H:%M:%S')  # Get current timestamp
+
+        # Upload vitals to Firebase
+        upload_to_firebase(patient_id, patient_name,age, vitals_data, timestamp)
+
+        print(f"Vitals for {patient_name} uploaded at {timestamp}: {vitals_data}")
+
+        # Wait for 5 minutes before simulating and uploading new vitals
+        time.sleep(0)  # Simulate every 5 minutes (300 seconds)
+
+if _name_ == '_main_':
+    simulate_and_upload()
