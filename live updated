@@ -1,0 +1,85 @@
+import gradio as gr
+import pandas as pd
+import plotly.graph_objects as go
+import random
+import asyncio
+
+# Load dataset
+df = pd.read_csv("/content/drive/MyDrive/Dhanush/trained_patient_data.csv")
+patient_ids = df["Patient ID"].unique().tolist()
+
+
+# Function to simulate vital changes
+def simulate_vitals(base_row):
+    simulated = base_row.copy()
+    simulated["Heart Rate (bpm)"] += random.randint(-3, 3)
+    simulated["BP_systolic"] += random.randint(-4, 4)
+    simulated["BP_diastolic"] += random.randint(-2, 2)
+    simulated["Glucose Level (mg/dL)"] += random.randint(-5, 5)
+    return simulated
+
+# Function to create a Plotly graph
+def create_graph(y_values, label):
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        y=y_values,
+        mode='lines+markers',
+        name=label,
+        line_shape='spline'
+    ))
+    fig.update_layout(
+        title=label,
+        template='plotly_dark',
+        height=300
+    )
+    return fig
+
+# Live update handler
+async def live_update(patient_id, state):
+    base = df[df["Patient ID"] == patient_id].iloc[0]
+    info = f"""
+    <b>Name:</b> {base['Patient Name']}<br>
+    <b>Age:</b> {base['Patient Age']}<br>
+    """
+
+    vitals_history = {
+        "Heart Rate (bpm)": [],
+        "BP_systolic": [],
+        "BP_diastolic": [],
+        "Glucose Level (mg/dL)": []
+    }
+
+    while True:
+        new_data = simulate_vitals(base)
+        for vital in vitals_history:
+            vitals_history[vital].append(new_data[vital])
+            if len(vitals_history[vital]) > 20:
+                vitals_history[vital].pop(0)
+
+        yield (
+            info,
+            create_graph(vitals_history["Heart Rate (bpm)"], "Heart Rate (bpm)"),
+            create_graph(vitals_history["BP_systolic"], "BP Systolic"),
+            create_graph(vitals_history["BP_diastolic"], "BP Diastolic"),
+            create_graph(vitals_history["Glucose Level (mg/dL)"], "Glucose Level (mg/dL)")
+        )
+        await asyncio.sleep(5)
+
+# UI Setup
+with gr.Blocks(title="Live Patient Monitoring Dashboard") as app:
+    gr.Markdown("## 🩺 Live AI Health Monitoring")
+    patient_select = gr.Dropdown(choices=patient_ids, label="Select Patient ID")
+    info_box = gr.HTML()
+    graph1 = gr.Plot()
+    graph2 = gr.Plot()
+    graph3 = gr.Plot()
+    graph4 = gr.Plot()
+
+    # Trigger
+    patient_select.change(
+        live_update,
+        inputs=patient_select,
+        outputs=[info_box, graph1, graph2, graph3, graph4]
+    )
+
+app.queue().launch()
